@@ -1,0 +1,20 @@
+# Secrets: never commit
+.env
+.env.*
+!.env.example
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Generated vector database (rebuildable)
+chroma_db/
+
+# Source PDFs (download links are in README)
+data/*.pdf
+
+# OS / editor junk
+.DS_Store
+.vscode/
