@@ -1,16 +1,25 @@
-"""ingest.py - Prepare the PDFs for the chatbot.
+"""ingest.py - Prepare the PDFs for the chatbot (run this once, or after changing PDFs).
 
-Step 2.2: load each PDF page as a LangChain Document with its source metadata.
-Step 2.3: split pages into smaller overlapping chunks for precise retrieval.
-(Embedding and storing get added in Step 3.)
+Pipeline: load PDFs -> split into chunks -> embed each chunk -> store in Chroma.
 """
+import os
+import shutil
 from pathlib import Path
 
+# Turn off Chroma's anonymous usage telemetry (privacy: no usage data leaves the machine)
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+
+from dotenv import load_dotenv
+from langchain_chroma import Chroma
 from langchain_core.documents import Document
+from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
 
 DATA_DIR = Path("data")
+CHROMA_DIR = "chroma_db"              # local vector database folder (git-ignored)
+COLLECTION_NAME = "security_guides"
+EMBEDDING_MODEL = "text-embedding-3-small"
 
 # Chunking settings (measured in characters, not words)
 CHUNK_SIZE = 1000     # roughly one long paragraph
@@ -57,24 +66,43 @@ def split_documents(documents: list[Document]) -> list[Document]:
     return splitter.split_documents(documents)
 
 
-if __name__ == "__main__":
-    pages = load_pdfs()
-    print(f"Loaded {len(pages)} pages with text")
+def build_vector_store(chunks: list[Document]) -> Chroma:
+    """Embed every chunk with OpenAI and save the vectors to a local Chroma database.
 
-    pages_per_file = {}
-    for doc in pages:
-        name = doc.metadata["source"]
-        pages_per_file[name] = pages_per_file.get(name, 0) + 1
-    for name, count in pages_per_file.items():
-        print(f"  {name}: {count} pages")
+    The old database is deleted first, so re-running ingest never stores
+    duplicate chunks.
+    """
+    if Path(CHROMA_DIR).exists():
+        shutil.rmtree(CHROMA_DIR)
+
+    embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
+    return Chroma.from_documents(
+        documents=chunks,
+        embedding=embeddings,
+        collection_name=COLLECTION_NAME,
+        persist_directory=CHROMA_DIR,
+    )
+
+
+if __name__ == "__main__":
+    # Read OPENAI_API_KEY from .env into the environment (the key never appears in code)
+    load_dotenv()
+    if not os.getenv("OPENAI_API_KEY"):
+        raise SystemExit("OPENAI_API_KEY is not set. Copy .env.example to .env and add your key.")
+
+    pages = load_pdfs()
+    print(f"Loaded {len(pages)} pages from {len({p.metadata['source'] for p in pages})} PDFs")
 
     chunks = split_documents(pages)
-    sizes = [len(c.page_content) for c in chunks]
-    print(f"\nSplit into {len(chunks)} chunks")
-    print(f"  Average chunk size: {sum(sizes) // len(sizes)} characters")
-    print(f"  Largest chunk: {max(sizes)} characters")
+    print(f"Split into {len(chunks)} chunks")
 
-    sample = chunks[len(chunks) // 2]  # a chunk from the middle, not the cover page
-    print("\nSample chunk - metadata and text:")
-    print(sample.metadata)
-    print(sample.page_content)
+    print(f"Embedding with {EMBEDDING_MODEL} and saving to {CHROMA_DIR}/ ...")
+    store = build_vector_store(chunks)
+    print(f"Stored {store._collection.count()} chunks in Chroma")
+
+    # Quick retrieval test: embeds one short question (costs a tiny fraction of a cent)
+    question = "How long should passwords be?"
+    print(f"\nTest search: {question!r}")
+    for i, doc in enumerate(store.similarity_search(question, k=3), start=1):
+        preview = " ".join(doc.page_content.split())[:150]
+        print(f"  {i}. [{doc.metadata['source']}, page {doc.metadata['page']}] {preview}...")
