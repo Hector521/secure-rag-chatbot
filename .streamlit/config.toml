@@ -1,0 +1,7 @@
+[server]
+# Only accept connections from this computer, not the local network
+address = "localhost"
+
+[browser]
+# Don't send usage statistics to Streamlit
+gatherUsageStats = false
