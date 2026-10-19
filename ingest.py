@@ -81,6 +81,8 @@ def build_vector_store(chunks: list[Document]) -> Chroma:
         embedding=embeddings,
         collection_name=COLLECTION_NAME,
         persist_directory=CHROMA_DIR,
+        collection_metadata={"hnsw:space": "cosine"},  # score relevance with cosine similarity
+
     )
 
 
